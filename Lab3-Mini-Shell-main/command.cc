@@ -1,3 +1,13 @@
+/*
+ * 
+ *
+ * Template file.
+ * You will need to add more code here to execute the command table.
+ *
+ * NOTE: You are responsible for fixing any bugs this code may have!
+ *
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -19,7 +29,7 @@
 #include <errno.h>
 static int logFd = -1;
 
-static void logChildTermination() {
+static void logTermination() {
     const char message[] = "Child terminated\n";
     int written = 0;
     int length = sizeof(message) - 1;
@@ -36,7 +46,7 @@ static void handleChildren(int) {
 
     while (true) {
         pid_t pid = waitpid(-1, &status, WNOHANG);
-        if (pid > 0) { logChildTermination(); }
+        if (pid > 0) { logTermination(); }
         else if (pid < 0 && errno == EINTR) { continue; }
         else { break; }}
     errno = savedErrno;}
@@ -44,7 +54,6 @@ static void handleChildren(int) {
 void parse(std::vector<Token> &tokens) {
     std::vector<std::string> patterns(tokens.size());
     std::vector<bool> expandWildcard(tokens.size(), false);
-    // Remove grouping quotes, keeping quoted wildcards literal in glob patterns.
     for (int i = 0; i < (int)tokens.size(); i++) {
         if (tokens[i].type != TOKEN_COMMAND && tokens[i].type != TOKEN_ARGUMENT) { continue; }
         std::string word, pattern;
@@ -55,7 +64,7 @@ void parse(std::vector<Token> &tokens) {
             bool escaped = false;
             if (character == '\\' && quote != '\'') {
                 if (j + 1 >= (int)raw.size()) {
-                    fprintf(stderr, "Trailing backslash\n");
+                    fprintf(stderr, "Getting backslash\n");
                     return;}
                 char next = raw[j + 1];
                 if (quote == '"' && next != '"' && next != '\\' && next != '$' && next != '`') {
@@ -72,7 +81,7 @@ void parse(std::vector<Token> &tokens) {
             if ((quote || escaped) && strchr("*?[]\\", character)) { pattern += '\\'; }
             pattern += character;
             if (!quote && !escaped && (character == '*' || character == '?')) { expandWildcard[i] = true; }}
-        if (quote) { fprintf(stderr, "Unmatched quote\n"); return; }
+        if (quote) { fprintf(stderr, "Quote not matched\n"); return; }
         tokens[i].value = word;
         patterns[i] = pattern;}
 
@@ -99,14 +108,14 @@ void parse(std::vector<Token> &tokens) {
             else { currentSimpleCommand->insertArgument(strdup(tokens[i].value.c_str())); }}
         else if (tokens[i].type == TOKEN_PIPE) {
             if (currentSimpleCommand->_numberOfArguments == 0) {
-                fprintf(stderr, "Missing command before pipe\n");
+                fprintf(stderr, "There is missing command before pipe\n");
                 valid = false;
                 break;}
             currentSimpleCommand = new SimpleCommand();
             currentCommand.insertSimpleCommand(currentSimpleCommand);}
         else if (tokens[i].type == TOKEN_BACKGROUND) {
             if (currentSimpleCommand->_numberOfArguments == 0 || i + 1 >= (int)tokens.size() || tokens[i + 1].type != TOKEN_EOF) {
-                fprintf(stderr, "& must be at the end of a command\n");
+                fprintf(stderr, "& must be at the end\n");
                 valid = false;
                 break;}
             currentCommand._background = 1;}
@@ -125,14 +134,13 @@ void parse(std::vector<Token> &tokens) {
             else { duplicate = currentCommand._outFile != NULL; }
             if (duplicate) { fprintf(stderr, "Duplicate redirection\n"); valid = false; break; }
 
-            // Move to the filename so it is not added as an argument.
             i++;
             if (expandWildcard[i]) {
                 glob_t matches = {};
                 int result = glob(patterns[i].c_str(), 0, NULL, &matches);
                 if (result == 0 && matches.gl_pathc == 1) { tokens[i].value = matches.gl_pathv[0]; }
                 else if (result != GLOB_NOMATCH) {
-                    fprintf(stderr, "Redirection must match exactly one file\n");
+                    fprintf(stderr, "Redirection must be matched to exactly one file\n");
                     valid = false;}
                 globfree(&matches);
                 if (!valid) { break; }}
@@ -144,7 +152,6 @@ void parse(std::vector<Token> &tokens) {
             if (redirectType == TOKEN_INPUT) { currentCommand._inputFile = strdup(filename); }
             else if (redirectType == TOKEN_ERROR) { currentCommand._errFile = strdup(filename); }
             else if (redirectType == TOKEN_REDIRECT_AND_ERROR) {
-                // Each field owns a separate copy of the filename.
                 currentCommand._outFile = strdup(filename);
                 currentCommand._errFile = strdup(filename);
                 currentCommand._out_error = 1;
@@ -154,8 +161,6 @@ void parse(std::vector<Token> &tokens) {
                 if (redirectType == TOKEN_APPEND) { currentCommand._append = 1; }
                 else { currentCommand._append = 0; }}}
         else { fprintf(stderr, "Invalid token\n"); valid = false; break; }}
-
-    // Reject an empty final command, but keep blank input quiet.
     if (valid && currentSimpleCommand->_numberOfArguments == 0) {
         if (currentCommand._numberOfSimpleCommands > 1 || currentCommand._inputFile != NULL || currentCommand._outFile != NULL || currentCommand._errFile != NULL) {
             fprintf(stderr, "Missing command\n");}
@@ -254,7 +259,7 @@ void Command::execute() {
     if (_numberOfSimpleCommands == 1 && strcmp(_simpleCommands[0]->_arguments[0], "cd") == 0) {
         SimpleCommand *command = _simpleCommands[0];
         if (command->_numberOfArguments > 2) {
-            fprintf(stderr, "cd: too many arguments\n");
+            fprintf(stderr, "cd: a lot of arguments\n");
             clear();
             return;}
         const char *directory;
@@ -289,7 +294,6 @@ void Command::execute() {
         clear();
         return;}
 
-    // Delay child collection until pipeline creation and failure cleanup finish.
     sigset_t childSignals, oldMask;
     sigemptyset(&childSignals);
     sigaddset(&childSignals, SIGCHLD);
@@ -355,8 +359,6 @@ void Command::execute() {
     if (!valid) {
         for (int i = 0; i < (int)children.size(); i++) {
             kill(children[i], SIGKILL);}}
-
-    // Allow the SIGCHLD handler to collect finished children again.
     if (sigprocmask(SIG_SETMASK, &oldMask, NULL) < 0) {
         perror("sigprocmask");
         exit(1);}
@@ -367,7 +369,7 @@ void Command::execute() {
             do {
                 result = waitpid(children[i], &status, 0);}
             while (result < 0 && errno == EINTR);
-            if (result > 0) { logChildTermination(); }
+            if (result > 0) { logTermination(); }
             else if (result < 0 && errno != ECHILD) { perror("waitpid"); }}}
     else if (!children.empty()) {
         printf("[background] %ld\n", (long)children.back());}
@@ -378,8 +380,6 @@ void Command::prompt() {
         printf("myshell>");
         fflush(stdout);
         if (!std::getline(std::cin, input)) { break; }
-
-        // Scan here because tokenizer.cc must stay unchanged.
         std::vector<Token> tokens;
         bool valid = true;
         int i = 0;
@@ -387,8 +387,6 @@ void Command::prompt() {
             if (std::isspace((unsigned char)input[i])) { i++; continue; }
             Token token;
             int start = i;
-
-            // Recognize longer operators before their shorter prefixes.
             if (input.compare(i, 3, ">>&") == 0) {
                 token.type = TOKEN_REDIRECT_AND_ERROR;
                 i += 3;}
@@ -409,7 +407,7 @@ void Command::prompt() {
                     char character = input[i];
                     if (character == '\\' && quote != '\'') {
                         if (i + 1 >= (int)input.size()) {
-                            fprintf(stderr, "Trailing backslash\n");
+                            fprintf(stderr, "Getting backslash\n");
                             valid = false;
                             break;}
                         i += 2;
@@ -420,7 +418,7 @@ void Command::prompt() {
                     else if (std::isspace((unsigned char)character) || character == '|' || character == '<' || character == '>' || character == '&') { break; }
                     i++;}
                 if (!valid) { break; }
-                if (quote) { fprintf(stderr, "Unmatched quote\n"); valid = false; break; }}
+                if (quote) { fprintf(stderr, "Quote not matched\n"); valid = false; break; }}
             token.value = input.substr(start, i - start);
             tokens.push_back(token);}
         if (valid) {
